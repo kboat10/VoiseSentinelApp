@@ -84,10 +84,8 @@ object AudioDecoder {
                         if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                             outputDone = true
                         }
-                        val outputBuffer = codec.getOutputBuffer(outputBufferIndex) ?: run {
-                            codec.releaseOutputBuffer(outputBufferIndex, false)
-                            continue
-                        }
+                        val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
+                        if (outputBuffer != null) {
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                         val chunk = ByteArray(bufferInfo.size)
@@ -95,6 +93,7 @@ object AudioDecoder {
                         val shorts = ByteBuffer.wrap(chunk).order(ByteOrder.nativeOrder()).asShortBuffer()
                         while (shorts.hasRemaining()) {
                             pcmSamples.add(shorts.get())
+                        }
                         }
                         codec.releaseOutputBuffer(outputBufferIndex, false)
                     }

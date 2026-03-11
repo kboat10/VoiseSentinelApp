@@ -152,7 +152,7 @@ object FeatureExtractor {
         (2595 * log10(1 + hz / 700)).toFloat()
 
     private fun melToHz(mel: Float): Double =
-        700 * (10.0.pow(mel / 2595) - 1)
+        700 * (10.0.pow((mel / 2595).toDouble()) - 1)
 
     private fun fftMagnitude(signal: FloatArray): FloatArray {
         val n = signal.size
