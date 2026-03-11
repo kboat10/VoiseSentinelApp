@@ -20,6 +20,8 @@ class MobileBundleService {
     return BundleInfo.fromJson(json);
   }
 
+  static const int _minModelSizeBytes = 10 * 1024 * 1024; // 10MB
+
   /// Download Wav2Vec2 ONNX model and save locally (~300MB).
   static Future<File> downloadModel({
     void Function(int received, int total)? onProgress,
@@ -28,6 +30,10 @@ class MobileBundleService {
     final streamedRes = await http.Client().send(req);
     if (streamedRes.statusCode != 200) {
       throw Exception('Model download failed: ${streamedRes.statusCode}');
+    }
+    final contentType = streamedRes.headers['content-type']?.toLowerCase() ?? '';
+    if (contentType.contains('application/json') || contentType.contains('text/html')) {
+      throw Exception('Invalid response: server returned $contentType instead of model file');
     }
     final dir = await getApplicationSupportDirectory();
     final file = File('${dir.path}/wav2vec2_quantized.onnx');
@@ -40,6 +46,11 @@ class MobileBundleService {
       onProgress?.call(received, total > 0 ? total : received);
     }
     await sink.close();
+    final size = await file.length();
+    if (size < _minModelSizeBytes) {
+      await file.delete();
+      throw Exception('Downloaded file too small ($size bytes). Expected ~300MB. Server may have returned an error page.');
+    }
     return file;
   }
 

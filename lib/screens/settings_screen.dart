@@ -324,11 +324,14 @@ class _SettingsTile extends StatelessWidget {
             children: [
               Icon(icon, size: 22, color: AppTheme.primaryBlue),
               const SizedBox(width: 14),
-              Text(
-                label,
-                style: TextStyle(
-                  color: textColor,
-                  fontWeight: FontWeight.w500,
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

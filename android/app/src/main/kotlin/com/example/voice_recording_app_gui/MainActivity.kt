@@ -1,6 +1,7 @@
 package com.example.voice_recording_app_gui
 
 import android.content.Intent
+import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -65,6 +66,11 @@ class MainActivity : FlutterActivity() {
                         val modelPath = call.argument<String>("wav2vecModelPath")
                         if (!wav2vec.isLoaded()) {
                             val loaded = if (modelPath != null && modelPath.isNotEmpty()) {
+                                val file = File(modelPath)
+                                if (!file.exists() || file.length() == 0L) {
+                                    result.error("WAV2VEC2_UNAVAILABLE", "Downloaded model file not found or empty. Try downloading again from Settings.", null)
+                                    return@setMethodCallHandler
+                                }
                                 wav2vec.loadFromPath(modelPath)
                             } else {
                                 wav2vec.load()

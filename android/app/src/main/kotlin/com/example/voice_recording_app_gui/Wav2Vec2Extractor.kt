@@ -71,6 +71,7 @@ class Wav2Vec2Extractor(private val context: Context) {
 
     /**
      * Extract 1024-dim SSL embedding from waveform.
+     * Supports both standard and quantized Wav2Vec2 models (dynamic input/output names).
      * @param waveform 16kHz mono float array, normalized (zero mean, unit variance recommended)
      * @return FloatArray of 1024 dims, or null if model not loaded or inference fails
      */
@@ -80,12 +81,18 @@ class Wav2Vec2Extractor(private val context: Context) {
 
         return try {
             val normalized = normalizeWaveform(waveform)
+            val inputName = sess.inputNames.iterator().nextOrNull() ?: "input_values"
             val inputTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(normalized), longArrayOf(1, normalized.size.toLong()))
-            val inputs = Collections.singletonMap("input_values", inputTensor)
+            val inputs = Collections.singletonMap(inputName, inputTensor)
             val result = sess.run(inputs)
             inputTensor.close()
 
-            val outputTensor = result.get("last_hidden_state")?.get() as? OnnxTensor ?: run {
+            val outputName = if (sess.outputNames.contains("last_hidden_state")) "last_hidden_state"
+                else sess.outputNames.iterator().nextOrNull() ?: run {
+                result.close()
+                return null
+            }
+            val outputTensor = result.get(outputName)?.get() as? OnnxTensor ?: run {
                 result.close()
                 return null
             }
@@ -93,8 +100,12 @@ class Wav2Vec2Extractor(private val context: Context) {
             val batch = shape[0].toInt()
             val seqLen = shape[1].toInt()
             val hiddenSize = shape[2].toInt()
-            val buffer = FloatArray(batch * seqLen * hiddenSize)
-            outputTensor.floatBuffer.get(buffer)
+            val buffer = extractFloatBuffer(outputTensor, batch * seqLen * hiddenSize)
+                ?: run {
+                outputTensor.close()
+                result.close()
+                return null
+            }
             outputTensor.close()
             result.close()
 
@@ -107,6 +118,19 @@ class Wav2Vec2Extractor(private val context: Context) {
                 pooled[h] = (sum / seqLen).toFloat()
             }
             pooled
+        } catch (e: Exception) {
+            e.printStackTrace()
+            throw e
+        }
+    }
+
+    private fun <T> Iterator<T>.nextOrNull(): T? = if (hasNext()) next() else null
+
+    private fun extractFloatBuffer(tensor: OnnxTensor, size: Int): FloatArray? {
+        return try {
+            val buffer = FloatArray(size)
+            tensor.floatBuffer.get(buffer)
+            buffer
         } catch (e: Exception) {
             e.printStackTrace()
             null

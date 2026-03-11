@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
@@ -131,6 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _amplitudeSub = null;
     final path = _currentRecordingPath;
     final duration = _formatDuration(_recordingSeconds);
+    final seconds = _recordingSeconds;
     try {
       await _audioRecorder.stop();
     } catch (_) {}
@@ -147,6 +149,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (path == null) {
       setState(() => _isAnalyzing = false);
+      return;
+    }
+
+    if (seconds < 1) {
+      setState(() => _isAnalyzing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Recording too short. Record at least 1 second for analysis.'),
+        ),
+      );
       return;
     }
 
@@ -170,8 +182,11 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isAnalyzing = false);
+      final message = e is PlatformException
+          ? (e.message ?? e.code ?? e.toString())
+          : e.toString();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Analysis failed: $e')),
+        SnackBar(content: Text('Analysis failed: $message')),
       );
     }
   }
