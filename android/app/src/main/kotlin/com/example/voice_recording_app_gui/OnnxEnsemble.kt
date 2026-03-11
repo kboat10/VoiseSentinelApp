@@ -2,10 +2,11 @@ package com.example.voice_recording_app_gui
 
 /**
  * Stacked ensemble pipeline: Serial (scaler) → Parallel (5 base models) → Serial (meta_learner).
- * Feature order: centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023 = 1094.
+ * Feature order: centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023 = 1092.
+ * (Models expect 1092; spec may say 1094 but deployed scaler/base models use 1092.)
  */
 object OnnxEnsemble {
-    const val FEATURE_DIM = 1094
+    const val FEATURE_DIM = 1092
 
     val SCALER = "models/onnx_models/scaler.onnx"
     val CNN = "models/onnx_models/cnn_model.onnx"

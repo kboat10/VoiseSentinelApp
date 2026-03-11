@@ -128,9 +128,23 @@ class Wav2Vec2Extractor(private val context: Context) {
 
     private fun extractFloatBuffer(tensor: OnnxTensor, size: Int): FloatArray? {
         return try {
-            val buffer = FloatArray(size)
-            tensor.floatBuffer.get(buffer)
-            buffer
+            tensor.getFloatBuffer()?.let { fb ->
+                val buffer = FloatArray(size)
+                fb.get(buffer)
+                return buffer
+            }
+            tensor.getDoubleBuffer()?.let { db ->
+                return FloatArray(size) { db.get().toFloat() }
+            }
+            tensor.getByteBuffer()?.let { bb ->
+                val bytes = ByteArray(size)
+                bb.get(bytes)
+                return FloatArray(size) { bytes[it].toInt().toFloat() }
+            }
+            tensor.getShortBuffer()?.let { sb ->
+                return FloatArray(size) { sb.get().toFloat() }
+            }
+            null
         } catch (e: Exception) {
             e.printStackTrace()
             null

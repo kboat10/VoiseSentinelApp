@@ -14,7 +14,7 @@ class OnnxInferenceService {
     return result == true;
   }
 
-  /// Extracts 1094-dim feature vector from audio file (for offline inference).
+  /// Extracts 1092-dim feature vector from audio file (for offline inference).
   /// Decodes audio, extracts DSP + Wav2Vec2 features on Android.
   /// [wav2vecModelPath] optional path to downloaded Wav2Vec2 ONNX (from /mobile/bundle/model).
   static Future<List<double>> extractFeaturesFromAudio(
@@ -38,11 +38,11 @@ class OnnxInferenceService {
   }
 
   /// Runs the full Serial-Parallel-Serial ensemble pipeline.
-  /// [features] must be the 1094-dim vector (centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023).
+  /// [features] must be the 1092-dim vector (centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023).
   /// Returns [EnsembleResult] with probability and verdict (real / suspicious / synthetic_probable / synthetic_definitive).
   static Future<EnsembleResult> runEnsemble(List<double> features) async {
-    if (features.length != 1094) {
-      throw ArgumentError('Expected 1094 features, got ${features.length}');
+    if (features.length != 1092) {
+      throw ArgumentError('Expected 1092 features, got ${features.length}');
     }
     final result = await _channel.invokeMethod<Map<Object?, Object?>>(
       'runEnsemble',

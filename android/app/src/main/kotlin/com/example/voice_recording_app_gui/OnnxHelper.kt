@@ -65,9 +65,10 @@ class OnnxHelper(private val context: Context) {
                 val outputTensor = result.get(name).get() as OnnxTensor
                 val shape = outputTensor.info.shape
                 val numElements = shape.map { it.toInt() }.reduce(Int::times)
-                val buffer = FloatArray(numElements)
-                outputTensor.floatBuffer.get(buffer)
-                outputMap[name] = buffer.toList()
+                val floats = extractFloatsFromTensor(outputTensor, numElements)
+                if (floats != null) {
+                    outputMap[name] = floats.toList()
+                }
                 outputTensor.close()
             }
             result.close()
@@ -95,27 +96,27 @@ class OnnxHelper(private val context: Context) {
 
     /**
      * Runs the full Serial-Parallel-Serial ensemble pipeline.
-     * @param rawFeatures 1094-dim vector (centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023)
+     * @param rawFeatures 1092-dim vector (centroid_mean, log_energy, mfcc_1..13, mfcc_std_1..13, mel_1..40, ssl_0..1023)
      * @return Pair(probability, verdict) where verdict is one of: real, suspicious, synthetic_probable, synthetic_definitive
      */
     fun runEnsemble(rawFeatures: FloatArray): Pair<Double, String> {
         if (rawFeatures.size != OnnxEnsemble.FEATURE_DIM) {
             throw IllegalArgumentException("Expected ${OnnxEnsemble.FEATURE_DIM} features, got ${rawFeatures.size}")
         }
-        // 1. Scaler: [1, 1094] -> [1, 1094]
-        val scaled = runInference(OnnxEnsemble.SCALER, longArrayOf(1L, 1094L), rawFeatures)
+        // 1. Scaler: [1, 1092] -> [1, 1092]
+        val scaled = runInference(OnnxEnsemble.SCALER, longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong()), rawFeatures)
         val scaledList = scaled.values.single()
-        val scaledVector = FloatArray(1094) { scaledList[it] }
+        val scaledVector = FloatArray(OnnxEnsemble.FEATURE_DIM) { scaledList[it] }
 
         // 2. Base models (parallel). Order for meta: [RF, CNN, LSTM, TCN, TSSD]
         val baseProbs = FloatArray(5)
-        val shape1094x1 = longArrayOf(1L, 1094L, 1L)
-        val shape1094 = longArrayOf(1L, 1094L)
+        val shape1092x1 = longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong(), 1L)
+        val shape1092 = longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong())
 
         OnnxEnsemble.BASE_MODELS_FOR_META.forEachIndexed { idx, modelPath ->
             val out = runInference(
                 modelPath,
-                if (modelPath == OnnxEnsemble.RF) shape1094 else shape1094x1,
+                if (modelPath == OnnxEnsemble.RF) shape1092 else shape1092x1,
                 if (modelPath == OnnxEnsemble.RF) scaledVector else scaledVector
             )
             baseProbs[idx] = extractProbability(out)
@@ -127,6 +128,27 @@ class OnnxHelper(private val context: Context) {
 
         val verdict = OnnxEnsemble.verdict(pFinal)
         return Pair(pFinal, verdict)
+    }
+
+    /** Safely extract float array from tensor; handles Float, Double, INT8, fp16, etc. */
+    private fun extractFloatsFromTensor(tensor: OnnxTensor, size: Int): FloatArray? {
+        tensor.getFloatBuffer()?.let { fb ->
+            val arr = FloatArray(size)
+            fb.get(arr)
+            return arr
+        }
+        tensor.getDoubleBuffer()?.let { db ->
+            return FloatArray(size) { db.get().toFloat() }
+        }
+        tensor.getByteBuffer()?.let { bb ->
+            val bytes = ByteArray(size)
+            bb.get(bytes)
+            return FloatArray(size) { bytes[it].toInt().toFloat() }
+        }
+        tensor.getShortBuffer()?.let { sb ->
+            return FloatArray(size) { sb.get().toFloat() }
+        }
+        return null
     }
 
     /** Extract single probability from base model output (P(synthetic)); handle [1], [1,1], or [1,2] shapes. */
