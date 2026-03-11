@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
-import 'screens/welcome_screen.dart';
-import 'screens/home_screen.dart';
+import 'screens/initial_route_wrapper.dart';
 import 'screens/settings_screen.dart';
-import 'screens/change_user_type_screen.dart';
 import 'screens/audio_breakdown_screen.dart';
 
 void main() {
@@ -44,11 +42,9 @@ class _VoiceSentinelAppState extends State<VoiceSentinelApp> {
               child: child!,
             );
           },
-          home: const WelcomeScreen(),
+          home: const InitialRouteWrapper(),
           routes: {
-            '/home': (context) => const HomeScreen(),
             '/settings': (context) => const SettingsScreen(),
-            '/change-user-type': (context) => const ChangeUserTypeScreen(),
             '/audio-breakdown': (context) => const AudioBreakdownScreen(),
           },
         );

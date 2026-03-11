@@ -2,6 +2,8 @@
 
 Models live in **onnx_models/** and are loaded via ONNX Runtime (method channel from Flutter).
 
+For full backend implementation details (input shapes, feature order, thresholds), see **`docs/ONNX_BACKEND_SPEC.md`** in the project root.
+
 ## Files in this pipeline
 
 | File | Role |

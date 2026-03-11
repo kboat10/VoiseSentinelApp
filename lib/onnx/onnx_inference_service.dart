@@ -8,6 +8,30 @@ class OnnxInferenceService {
   static const MethodChannel _channel =
       MethodChannel('com.example.voice_recording_app_gui/onnx');
 
+  /// Returns true if app was opened from "record call" notification. Clears the flag.
+  static Future<bool> getAndClearRecordCallIntent() async {
+    final result = await _channel.invokeMethod<bool>('getAndClearRecordCallIntent');
+    return result == true;
+  }
+
+  /// Extracts 1094-dim feature vector from audio file (for offline inference).
+  /// Decodes audio, extracts DSP + Wav2Vec2 features on Android.
+  /// [wav2vecModelPath] optional path to downloaded Wav2Vec2 ONNX (from /mobile/bundle/model).
+  static Future<List<double>> extractFeaturesFromAudio(
+    String audioPath, {
+    String? wav2vecModelPath,
+  }) async {
+    final result = await _channel.invokeMethod<List<Object?>>(
+      'extractFeaturesFromAudio',
+      {
+        'audioPath': audioPath,
+        if (wav2vecModelPath != null) 'wav2vecModelPath': wav2vecModelPath,
+      },
+    );
+    if (result == null) throw Exception('extractFeaturesFromAudio returned null');
+    return result.map((e) => (e as num).toDouble()).toList();
+  }
+
   /// Loads all 7 ensemble models (scaler + 5 base + meta_learner). Call once before [runEnsemble].
   static Future<void> loadEnsembleModels() async {
     await _channel.invokeMethod<void>('loadEnsembleModels');

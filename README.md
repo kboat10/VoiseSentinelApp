@@ -1,11 +1,33 @@
+# Voice Sentinel Mobile
 
-  # Voice Recording App GUI
+Flutter mobile app for AI-powered deepfake voice detection. Record calls, analyze audio, and get real-time verdicts (Real / Suspicious / Synthetic).
 
-  This is a code bundle for Voice Recording App GUI. The original project is available at https://www.figma.com/design/hE9S0OkaEWZvNpWRiu647S/Voice-Recording-App-GUI.
+## Features
 
-  ## Running the code
+- **Call recording** — Put call on speaker, record, and analyze
+- **Call detection** — Incoming call triggers "Tap to record" notification (Android)
+- **Dual-path analysis** — Online (API) or offline (on-device ONNX)
+- **Mobile bundle API** — Download Wav2Vec2 model from backend
 
-  Run `npm i` to install the dependencies.
+## Prerequisites
 
-  Run `npm run dev` to start the development server.
-  
+- Flutter SDK 3.0+
+- Android device/emulator (API 23+)
+
+## Running the app
+
+```bash
+flutter pub get
+flutter run
+```
+
+## Testing
+
+See [TESTING.md](TESTING.md) for setup, test scenarios, and troubleshooting.
+
+## Architecture
+
+- **Feature extraction:** Acoustic (68 dims) + Wav2Vec2 SSL (1024 dims) → 1094-dim vector
+- **Ensemble:** Scaler → 5 base models (RF, CNN, CNN-LSTM, TCN, TSSD) → meta-learner
+- **Backend:** `http://45.55.247.199/api`
+- **Docs:** [docs/ONNX_BACKEND_SPEC.md](docs/ONNX_BACKEND_SPEC.md) for backend implementation details

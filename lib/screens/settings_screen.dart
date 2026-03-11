@@ -1,11 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
-import '../widgets/app_bar_back.dart';
 import '../widgets/themed_scaffold.dart';
+import '../services/mobile_bundle_service.dart';
+import '../services/wav2vec_model_manager.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _downloading = false;
+  String? _downloadStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -13,7 +24,7 @@ class SettingsScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? AppTheme.darkTextLight : AppTheme.darkText;
     return ThemedScaffold(
-      appBar: const AppBarBack(title: 'Settings'),
+      appBar: AppBar(title: const Text('Settings')),
       padding: EdgeInsets.zero,
       body: ListView(
         padding: const EdgeInsets.all(24),
@@ -58,6 +69,73 @@ class SettingsScreen extends StatelessWidget {
               },
             ),
           ),
+          if (Platform.isAndroid) ...[
+            const SizedBox(height: 16),
+            _Section(
+              title: 'Offline Models',
+              subtitle: 'Wav2Vec2 for on-device analysis',
+              icon: Icons.download_rounded,
+              textColor: textColor,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_downloadStatus != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        _downloadStatus!,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                    ),
+                  _SettingsTile(
+                    icon: Icons.download_rounded,
+                    label: _downloading
+                        ? 'Downloading...'
+                        : (Wav2Vec2ModelManager.modelPath != null
+                            ? 'Model ready'
+                            : 'Download Wav2Vec2 model (~300MB)'),
+                    onTap: _downloading
+                        ? () {}
+                        : () async {
+                            setState(() {
+                              _downloading = true;
+                              _downloadStatus = null;
+                            });
+                            try {
+                              await MobileBundleService.downloadModel(
+                                onProgress: (received, total) {
+                                  if (mounted) {
+                                    final pct = total > 0
+                                        ? (received / total * 100).toStringAsFixed(0)
+                                        : received ~/ (1024 * 1024);
+                                    setState(() => _downloadStatus =
+                                        total > 0
+                                            ? '$pct%'
+                                            : '${received ~/ (1024 * 1024)} MB');
+                                  }
+                                },
+                              );
+                              if (mounted) {
+                                setState(() {
+                                  _downloading = false;
+                                  _downloadStatus = 'Download complete';
+                                });
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                setState(() {
+                                  _downloading = false;
+                                  _downloadStatus = 'Failed: $e';
+                                });
+                              }
+                            }
+                          },
+                    textColor: textColor,
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           _Section(
             title: 'Audio',

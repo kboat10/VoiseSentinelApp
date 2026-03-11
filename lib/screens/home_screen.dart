@@ -1,12 +1,18 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+
+import '../app/record_call_trigger.dart';
 import '../theme/app_theme.dart';
-import 'welcome_screen.dart';
 import '../widgets/gradient_button.dart';
 import '../widgets/live_voice_waveform.dart' show LiveVoiceWaveform, AudioVisualizerStyle;
-import '../widgets/themed_scaffold.dart';
+import '../services/analysis_service.dart';
+import '../services/history_service.dart';
+import '../services/wav2vec_model_manager.dart';
+import '../models/history_record.dart';
+import 'audio_breakdown_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,7 +22,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<_Recording> _recordings = [];
   bool _isRecording = false;
   int _recordingSeconds = 0;
   Timer? _timer;
@@ -24,6 +29,46 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<double> _amplitudeHistory = [];
   static const int _maxAmplitudeBars = 40;
   StreamSubscription<Amplitude>? _amplitudeSub;
+  String? _currentRecordingPath;
+  bool _isAnalyzing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkRecordCallTrigger());
+  }
+
+  void _checkRecordCallTrigger() {
+    if (RecordCallTrigger.triggered) {
+      RecordCallTrigger.triggered = false;
+      _showRecordCallDialog();
+    }
+    Wav2Vec2ModelManager.ensureModel();
+  }
+
+  Future<void> _showRecordCallDialog() async {
+    if (!mounted) return;
+    final start = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Record Call'),
+        content: const Text(
+          'Put the call on speaker, then tap Start to record for analysis.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start Recording'),
+          ),
+        ],
+      ),
+    );
+    if (start == true && mounted) _startRecording();
+  }
 
   @override
   void dispose() {
@@ -43,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    _currentRecordingPath = path;
     try {
       await _audioRecorder.start(const RecordConfig(), path: path);
     } catch (e) {
@@ -50,16 +96,15 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not start recording: $e')),
       );
+      _currentRecordingPath = null;
       return;
     }
     _amplitudeHistory.clear();
     _amplitudeSub = _audioRecorder
         .onAmplitudeChanged(const Duration(milliseconds: 40))
         .listen((Amplitude amp) {
-      // dBFS: -90 (silence) to 0 (max). Map so speech produces clear visual movement.
       final db = amp.current.clamp(-90.0, 0.0);
       final normalized = (db + 90) / 90;
-      // Slightly more gain so speaking clearly moves the visualizer (0.2 baseline, 0.8 range).
       final visible = (normalized * 0.8) + 0.2;
       if (mounted) {
         setState(() {
@@ -84,41 +129,51 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _stopRecording() async {
     _amplitudeSub?.cancel();
     _amplitudeSub = null;
+    final path = _currentRecordingPath;
+    final duration = _formatDuration(_recordingSeconds);
     try {
       await _audioRecorder.stop();
     } catch (_) {}
     _timer?.cancel();
     _timer = null;
-    final duration = _formatDuration(_recordingSeconds);
+    _currentRecordingPath = null;
+
+    if (!mounted) return;
     setState(() {
       _isRecording = false;
-      _recordings.insert(
-        0,
-        _Recording(
-          name: 'Recording ${_recordings.length + 1}',
-          duration: duration,
-          status: _RecordStatus.analyzing,
+      _recordingSeconds = 0;
+      _isAnalyzing = true;
+    });
+
+    if (path == null) {
+      setState(() => _isAnalyzing = false);
+      return;
+    }
+
+    try {
+      final result = await AnalysisService.analyze(path);
+      final record = HistoryRecord(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        audioPath: path,
+        duration: duration,
+        result: result,
+        createdAt: DateTime.now(),
+      );
+      await HistoryService.add(record);
+      if (!mounted) return;
+      setState(() => _isAnalyzing = false);
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AudioBreakdownScreen(result: result),
         ),
       );
-      _recordingSeconds = 0;
-    });
-    Future.delayed(const Duration(seconds: 2), () {
+    } catch (e) {
       if (!mounted) return;
-      setState(() {
-        final idx = _recordings.indexWhere((r) => r.status == _RecordStatus.analyzing);
-        if (idx >= 0) {
-          _recordings[idx] = _Recording(
-            name: _recordings[idx].name,
-            duration: _recordings[idx].duration,
-            status: _RecordStatus.completed,
-          );
-        }
-      });
-    });
-  }
-
-  void _deleteRecording(int index) {
-    setState(() => _recordings.removeAt(index));
+      setState(() => _isAnalyzing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Analysis failed: $e')),
+      );
+    }
   }
 
   String _formatDuration(int seconds) {
@@ -131,181 +186,92 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? AppTheme.darkTextLight : AppTheme.darkText;
-    return ThemedScaffold(
-      drawer: _buildDrawer(context, textColor),
+    return Scaffold(
       appBar: AppBar(
         title: const Text('Voice Sentinel'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.account_circle_outlined),
-            onPressed: () => Navigator.of(context).pushNamed('/settings'),
-          ),
-        ],
       ),
       body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Deepfake Detection',
+              'Call Recording',
               style: TextStyle(
-                fontSize: 34,
+                fontSize: 28,
                 fontWeight: FontWeight.w800,
-                color: isDark ? AppTheme.darkTextLight : const Color(0xFF1F2937),
+                color: textColor,
                 letterSpacing: -0.5,
-                height: 1.2,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Protecting your audio authenticity with AI.',
+              'Put the call on speaker, then tap Record. Analysis works online or offline.',
               style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.normal,
+                fontSize: 15,
                 color: isDark ? Colors.grey[400] : const Color(0xFF6B7280),
                 height: 1.4,
               ),
             ),
             const SizedBox(height: 32),
-            _buildRecordCard(context, textColor),
-            const SizedBox(height: 20),
-            _buildAudioPreviewSection(context, textColor),
-            const SizedBox(height: 16),
-            _buildUploadCard(context, textColor),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.lightBlue.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _isRecording ? Icons.mic_rounded : Icons.mic_none_rounded,
+                        color: AppTheme.lightBlue,
+                        size: 40,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _isAnalyzing
+                          ? 'Analyzing...'
+                          : _isRecording
+                              ? 'Recording call...'
+                              : 'Ready to record',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isRecording ? _formatDuration(_recordingSeconds) : 'Put call on speaker first',
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 24),
-            _buildRecordingsSection(context, textColor),
+            _buildWaveformSection(context, textColor, isDark),
             const SizedBox(height: 32),
             GradientButton(
-              label: _isRecording ? 'Stop Recording' : 'Analyze Audio',
-              onPressed: _isRecording ? _stopRecording : _startRecording,
+              label: _isAnalyzing
+                  ? 'Analyzing...'
+                  : _isRecording
+                      ? 'Stop & Analyze'
+                      : 'Start Recording',
+              onPressed: _isAnalyzing ? null : (_isRecording ? _stopRecording : _startRecording),
               expand: true,
             ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.surface,
-                foregroundColor: AppTheme.primaryBlue,
-                side: const BorderSide(color: AppTheme.primaryBlue, width: 1.5),
-                elevation: 0,
-                minimumSize: const Size(double.infinity, 54),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'View History',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-            ),
-            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
-  Drawer _buildDrawer(BuildContext context, Color textColor) {
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-              child: Text(
-                'Voice Sentinel',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.person_outline_rounded, color: AppTheme.primaryBlue),
-              title: Text('Change user type', style: TextStyle(color: textColor, fontWeight: FontWeight.w500)),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/change-user-type');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.analytics_outlined, color: AppTheme.primaryBlue),
-              title: Text('Audio breakdown', style: TextStyle(color: textColor, fontWeight: FontWeight.w500)),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/audio-breakdown');
-              },
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.logout_rounded, color: AppTheme.primaryBlue),
-              title: Text('Log out', style: TextStyle(color: textColor, fontWeight: FontWeight.w500)),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-                  (route) => false,
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecordCard(BuildContext context, Color textColor) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.lightBlue.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.mic_none_rounded,
-                color: AppTheme.lightBlue,
-                size: 32,
-              ),
-            ),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _isRecording ? 'Recording...' : 'Ready to Scan',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _isRecording
-                        ? _formatDuration(_recordingSeconds)
-                        : 'Record or upload an audio file to begin.',
-                    style: const TextStyle(color: Colors.black54),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAudioPreviewSection(BuildContext context, Color textColor) {
+  Widget _buildWaveformSection(BuildContext context, Color textColor, bool isDark) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -341,7 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   border: Border.all(color: Colors.grey.shade300),
                 ),
                 child: Text(
-                  'Tap "Analyze Audio" to record and see the waveform',
+                  _isAnalyzing ? 'Processing...' : 'Tap "Start Recording" to begin',
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
               ),
@@ -350,144 +316,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  Widget _buildUploadCard(BuildContext context, Color textColor) {
-    return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          setState(() {
-            _recordings.insert(
-              0,
-              _Recording(
-                name: 'Uploaded audio',
-                duration: '--:--',
-                status: _RecordStatus.analyzing,
-              ),
-            );
-          });
-          Future.delayed(const Duration(seconds: 2), () {
-            if (!mounted) return;
-            setState(() {
-              final idx = _recordings.indexWhere(
-                  (r) => r.name == 'Uploaded audio' && r.status == _RecordStatus.analyzing);
-              if (idx >= 0) {
-                _recordings[idx] = _Recording(
-                  name: _recordings[idx].name,
-                  duration: _recordings[idx].duration,
-                  status: _RecordStatus.completed,
-                );
-              }
-            });
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.lightBlue.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.upload_rounded,
-                  color: AppTheme.lightBlue,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Upload Audio',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Tap to upload from your device.',
-                      style: TextStyle(color: Colors.grey[700]),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecordingsSection(BuildContext context, Color textColor) {
-    if (_recordings.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Recent Recordings',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: textColor,
-          ),
-        ),
-        const SizedBox(height: 12),
-        ...List.generate(
-          _recordings.length,
-          (i) => _buildRecordingTile(context, i, textColor),
-        ),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-
-  Widget _buildRecordingTile(BuildContext context, int index, Color textColor) {
-    final r = _recordings[index];
-    return Card(
-      margin: EdgeInsets.only(bottom: index < _recordings.length - 1 ? 8 : 0),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppTheme.lightBlue.withValues(alpha: 0.15),
-          child: r.status == _RecordStatus.analyzing
-              ? Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppTheme.primaryBlue,
-                  ),
-                )
-              : Icon(
-                  r.status == _RecordStatus.completed
-                      ? Icons.check_circle_rounded
-                      : Icons.mic_rounded,
-                  color: AppTheme.lightBlue,
-                  size: 24,
-                ),
-        ),
-        title: Text(r.name, style: TextStyle(fontWeight: FontWeight.w600, color: textColor)),
-        subtitle: Text(r.duration, style: TextStyle(color: Colors.grey[700])),
-        trailing: IconButton(
-          icon: Icon(Icons.delete_outline_rounded, color: Colors.grey[700]),
-          onPressed: () => _deleteRecording(index),
-        ),
-      ),
-    );
-  }
 }
-
-class _Recording {
-  _Recording({required this.name, required this.duration, required this.status});
-
-  final String name;
-  final String duration;
-  final _RecordStatus status;
-}
-
-enum _RecordStatus { analyzing, completed }
