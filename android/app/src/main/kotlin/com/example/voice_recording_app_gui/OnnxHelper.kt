@@ -26,10 +26,14 @@ class OnnxHelper(private val context: Context) {
         val fileName = assetPath.substringAfterLast('/')
         val cacheFile = File(context.cacheDir, "onnx_$fileName")
         if (!cacheFile.exists()) {
-            context.assets.open(assetPath).use { input ->
-                FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output)
+            try {
+                context.assets.open(assetPath).use { input ->
+                    FileOutputStream(cacheFile).use { output ->
+                        input.copyTo(output)
+                    }
                 }
+            } catch (e: Exception) {
+                throw IllegalStateException("Model asset not found: $assetPath", e)
             }
         }
         if (sessions.containsKey(assetPath)) {
@@ -62,14 +66,26 @@ class OnnxHelper(private val context: Context) {
             val result = session.run(inputs)
             val outputMap = mutableMapOf<String, List<Float>>()
             for (name in session.outputNames) {
-                val outputTensor = result.get(name).get() as OnnxTensor
-                val shape = outputTensor.info.shape
-                val numElements = shape.map { it.toInt() }.reduce(Int::times)
-                val floats = extractFloatsFromTensor(outputTensor, numElements)
-                if (floats != null) {
-                    outputMap[name] = floats.toList()
+                try {
+                    val outputTensor = result.get(name).get() as? OnnxTensor ?: continue
+                    val shape = outputTensor.info.shape
+                    if (shape.isEmpty()) {
+                        outputTensor.close()
+                        continue
+                    }
+                    val numElements = shape.map { it.toInt() }.reduce(Int::times)
+                    if (numElements <= 0) {
+                        outputTensor.close()
+                        continue
+                    }
+                    val floats = extractFloatsFromTensor(outputTensor, numElements)
+                    if (floats != null) {
+                        outputMap[name] = floats.toList()
+                    }
+                    outputTensor.close()
+                } catch (e: Exception) {
+                    // Skip outputs that fail to extract (e.g. unsupported type)
                 }
-                outputTensor.close()
             }
             result.close()
             return outputMap
@@ -87,10 +103,13 @@ class OnnxHelper(private val context: Context) {
 
     /**
      * Loads all 7 models required for the stacked ensemble pipeline.
+     * Skips models already loaded to avoid unnecessary session teardown.
      */
     fun loadEnsembleModels() {
         for (path in OnnxEnsemble.allModels()) {
-            loadModel(path)
+            if (!sessions.containsKey(path)) {
+                loadModel(path)
+            }
         }
     }
 
@@ -105,7 +124,11 @@ class OnnxHelper(private val context: Context) {
         }
         // 1. Scaler: [1, 1092] -> [1, 1092]
         val scaled = runInference(OnnxEnsemble.SCALER, longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong()), rawFeatures)
-        val scaledList = scaled.values.single()
+        val scaledList = scaled.values.firstOrNull()
+            ?: throw IllegalStateException("Scaler produced no output")
+        if (scaledList.size < OnnxEnsemble.FEATURE_DIM) {
+            throw IllegalStateException("Scaler output size ${scaledList.size} < ${OnnxEnsemble.FEATURE_DIM}")
+        }
         val scaledVector = FloatArray(OnnxEnsemble.FEATURE_DIM) { scaledList[it] }
 
         // 2. Base models (parallel). Order for meta: [RF, CNN, LSTM, TCN, TSSD]
@@ -148,27 +171,35 @@ class OnnxHelper(private val context: Context) {
         tensor.getShortBuffer()?.let { sb ->
             return FloatArray(size) { sb.get().toFloat() }
         }
+        tensor.getIntBuffer()?.let { ib ->
+            return FloatArray(size) { ib.get().toFloat() }
+        }
+        tensor.getLongBuffer()?.let { lb ->
+            return FloatArray(size) { lb.get().toFloat() }
+        }
         return null
     }
 
     /** Extract single probability from base model output (P(synthetic)); handle [1], [1,1], or [1,2] shapes. */
     private fun extractProbability(outputMap: Map<String, List<Float>>): Float {
-        val values = outputMap.values.single()
-        return when (values.size) {
-            1 -> values[0]
-            2 -> values[1] // second class = synthetic
-            else -> values[0]
+        val values = outputMap.values.firstOrNull()
+            ?: throw IllegalStateException("Base model produced no output")
+        return when {
+            values.size >= 2 -> values[1] // second class = synthetic
+            values.size == 1 -> values[0]
+            else -> throw IllegalStateException("Base model output empty")
         }
     }
 
     /** Meta-learner (Sklearn GBM): get probability of synthetic class; output[1][0][1] -> second output tensor, index 1. */
     private fun extractMetaSyntheticProbability(outputMap: Map<String, List<Float>>): Double {
-        // Sklearn ONNX often has label + probabilities; we want the probabilities tensor (2 values), take [1].
         for (values in outputMap.values) {
             if (values.size >= 2) return values[1].toDouble()
             if (values.size == 1) return values[0].toDouble()
         }
-        return outputMap.values.single().first().toDouble()
+        val first = outputMap.values.firstOrNull()?.firstOrNull()
+            ?: throw IllegalStateException("Meta-learner produced no output")
+        return first.toDouble()
     }
 
     fun close() {

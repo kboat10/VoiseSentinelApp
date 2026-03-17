@@ -80,12 +80,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             ),
                           ),
                           title: Text(
-                            'Recording ${i + 1}',
+                            _formatRecordTitle(r),
                             style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
                           ),
                           subtitle: Text(
-                            '${r.duration} • ${_verdictLabel(r.result.verdict)} • ${(r.result.probability * 100).toStringAsFixed(0)}%',
-                            style: TextStyle(color: Colors.grey[600]),
+                            '${r.duration} • ${_verdictLabel(r.result.verdict)} • ${(r.result.probability * 100).toStringAsFixed(0)}% • ${r.result.source ?? "unknown"}',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 13),
                           ),
                           trailing: const Icon(Icons.chevron_right_rounded),
                           onTap: () {
@@ -138,6 +138,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
       default:
         return Colors.grey;
     }
+  }
+
+  String _formatRecordTitle(HistoryRecord r) {
+    final d = r.createdAt;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final recordDay = DateTime(d.year, d.month, d.day);
+    if (recordDay == today) {
+      return 'Today ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    }
+    final yesterday = today.subtract(const Duration(days: 1));
+    if (recordDay == yesterday) {
+      return 'Yesterday ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    }
+    return '${d.month}/${d.day}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
   String _verdictLabel(String v) {

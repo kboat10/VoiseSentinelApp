@@ -29,7 +29,7 @@ class OnnxInferenceService {
       },
     );
     if (result == null) throw Exception('extractFeaturesFromAudio returned null');
-    return result.map((e) => (e as num).toDouble()).toList();
+    return result.map((e) => (e is num) ? e.toDouble() : 0.0).toList();
   }
 
   /// Loads all 7 ensemble models (scaler + 5 base + meta_learner). Call once before [runEnsemble].
@@ -49,8 +49,9 @@ class OnnxInferenceService {
       {'features': features},
     );
     if (result == null) throw Exception('runEnsemble returned null');
-    final probability = (result['probability'] as num).toDouble();
-    final verdict = result['verdict'] as String;
+    final prob = result['probability'];
+    final probability = (prob is num) ? prob.toDouble() : 0.0;
+    final verdict = (result['verdict'] as String?) ?? 'suspicious';
     return EnsembleResult(probability: probability, verdict: verdict);
   }
 

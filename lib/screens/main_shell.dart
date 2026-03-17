@@ -16,16 +16,24 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   MainTab _currentTab = MainTab.record;
+  int _historyRefreshKey = 0;
+
+  void _onTabSelected(MainTab tab) {
+    setState(() {
+      if (tab == MainTab.history) _historyRefreshKey++;
+      _currentTab = tab;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
         index: _currentTab.index,
-        children: const [
-          HomeScreen(),
-          HistoryScreen(),
-          SettingsScreen(),
+        children: [
+          const HomeScreen(),
+          HistoryScreen(key: ValueKey(_historyRefreshKey)),
+          const SettingsScreen(),
         ],
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -54,19 +62,19 @@ class _MainShellState extends State<MainShell> {
               icon: Icons.mic_rounded,
               label: 'Record',
               isSelected: _currentTab == MainTab.record,
-              onTap: () => setState(() => _currentTab = MainTab.record),
+              onTap: () => _onTabSelected(MainTab.record),
             ),
             _NavItem(
               icon: Icons.history_rounded,
               label: 'History',
               isSelected: _currentTab == MainTab.history,
-              onTap: () => setState(() => _currentTab = MainTab.history),
+              onTap: () => _onTabSelected(MainTab.history),
             ),
             _NavItem(
               icon: Icons.settings_rounded,
               label: 'Settings',
               isSelected: _currentTab == MainTab.settings,
-              onTap: () => setState(() => _currentTab = MainTab.settings),
+              onTap: () => _onTabSelected(MainTab.settings),
             ),
           ],
         ),

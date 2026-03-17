@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../models/analysis_result.dart';
+import 'auth_storage.dart';
 
 /// Backend API client for Voice Sentinel.
 class ApiService {
@@ -12,6 +14,7 @@ class ApiService {
   static const String _baseUrl = 'http://45.55.247.199/api';
 
   /// Upload audio file and get prediction.
+  /// Uses stored user_id when logged in.
   /// Returns [AnalysisResult] or throws on error.
   static Future<AnalysisResult> predict(String audioPath, {int? userId}) async {
     final file = File(audioPath);
@@ -24,9 +27,11 @@ class ApiService {
     request.files.add(
       await http.MultipartFile.fromPath('file', audioPath),
     );
-    request.fields['user_id'] = (userId ?? 0).toString();
+    request.fields['user_id'] = (userId ?? AuthStorage.userId ?? 0).toString();
 
-    final streamedResponse = await request.send();
+    final streamedResponse = await request.send()
+        .timeout(const Duration(seconds: 60),
+            onTimeout: () => throw TimeoutException('Upload timed out. Check your connection.'));
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode != 200) {

@@ -43,4 +43,12 @@ flutter {
 dependencies {
     // ONNX Runtime for Android: run inference from Flutter via method channel
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.0")
+
+    // Unit tests (JVM – no device needed)
+    testImplementation("junit:junit:4.13.2")
+
+    // Instrumented tests (require device/emulator)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
 }

@@ -98,8 +98,17 @@ class Wav2Vec2Extractor(private val context: Context) {
             }
             val shape = outputTensor.info.shape
             val batch = shape[0].toInt()
-            val seqLen = shape[1].toInt()
-            val hiddenSize = shape[2].toInt()
+            val seqLen: Int
+            val hiddenSize: Int
+            when (shape.size) {
+                3 -> { seqLen = shape[1].toInt(); hiddenSize = shape[2].toInt() }
+                2 -> { seqLen = 1; hiddenSize = shape[1].toInt() }
+                else -> {
+                    outputTensor.close()
+                    result.close()
+                    throw IllegalStateException("Wav2Vec2 output shape must be [batch,seq,hidden] or [batch,hidden], got ${shape.size} dims")
+                }
+            }
             val buffer = extractFloatBuffer(outputTensor, batch * seqLen * hiddenSize)
                 ?: run {
                 outputTensor.close()
@@ -109,6 +118,9 @@ class Wav2Vec2Extractor(private val context: Context) {
             outputTensor.close()
             result.close()
 
+            if (hiddenSize != EMBEDDING_DIM) {
+                throw IllegalStateException("Wav2Vec2 hidden size $hiddenSize != expected $EMBEDDING_DIM")
+            }
             val pooled = FloatArray(hiddenSize)
             for (h in 0 until hiddenSize) {
                 var sum = 0.0
@@ -143,6 +155,12 @@ class Wav2Vec2Extractor(private val context: Context) {
             }
             tensor.getShortBuffer()?.let { sb ->
                 return FloatArray(size) { sb.get().toFloat() }
+            }
+            tensor.getIntBuffer()?.let { ib ->
+                return FloatArray(size) { ib.get().toFloat() }
+            }
+            tensor.getLongBuffer()?.let { lb ->
+                return FloatArray(size) { lb.get().toFloat() }
             }
             null
         } catch (e: Exception) {

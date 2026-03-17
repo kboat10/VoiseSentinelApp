@@ -30,6 +30,9 @@ object FeatureExtractor {
      * @return FloatArray of 68 features in ensemble order
      */
     fun extract(waveform: FloatArray): FloatArray {
+        if (waveform.isEmpty()) {
+            return FloatArray(68) { 0f }
+        }
         val features = FloatArray(68)
 
         // 1. Log energy: log(sum(waveform^2))

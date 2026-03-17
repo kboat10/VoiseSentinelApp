@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,7 +13,9 @@ class MobileBundleService {
 
   /// Get bundle info (version, download URLs).
   static Future<BundleInfo> getBundleInfo() async {
-    final res = await http.get(Uri.parse('$_baseUrl/mobile/bundle/info'));
+    final res = await http.get(Uri.parse('$_baseUrl/mobile/bundle/info'))
+        .timeout(const Duration(seconds: 15),
+            onTimeout: () => throw TimeoutException('Bundle info request timed out.'));
     if (res.statusCode != 200) {
       throw Exception('Bundle info failed: ${res.statusCode}');
     }
@@ -27,7 +30,9 @@ class MobileBundleService {
     void Function(int received, int total)? onProgress,
   }) async {
     final req = http.Request('GET', Uri.parse('$_baseUrl/mobile/bundle/model'));
-    final streamedRes = await http.Client().send(req);
+    final streamedRes = await http.Client().send(req)
+        .timeout(const Duration(seconds: 30),
+            onTimeout: () => throw TimeoutException('Model download connection timed out.'));
     if (streamedRes.statusCode != 200) {
       throw Exception('Model download failed: ${streamedRes.statusCode}');
     }
@@ -56,7 +61,9 @@ class MobileBundleService {
 
   /// Download Wav2Vec2 config JSON.
   static Future<Map<String, dynamic>> getConfig() async {
-    final res = await http.get(Uri.parse('$_baseUrl/mobile/bundle/config'));
+    final res = await http.get(Uri.parse('$_baseUrl/mobile/bundle/config'))
+        .timeout(const Duration(seconds: 15),
+            onTimeout: () => throw TimeoutException('Config request timed out.'));
     if (res.statusCode != 200) {
       throw Exception('Config download failed: ${res.statusCode}');
     }

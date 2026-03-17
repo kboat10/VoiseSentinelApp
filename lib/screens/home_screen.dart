@@ -44,7 +44,6 @@ class _HomeScreenState extends State<HomeScreen> {
       RecordCallTrigger.triggered = false;
       _showRecordCallDialog();
     }
-    Wav2Vec2ModelManager.ensureModel();
   }
 
   Future<void> _showRecordCallDialog() async {
@@ -88,10 +87,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    final path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
     _currentRecordingPath = path;
     try {
-      await _audioRecorder.start(const RecordConfig(), path: path);
+      await _audioRecorder.start(
+        const RecordConfig(encoder: AudioEncoder.wav),
+        path: path,
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -183,7 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() => _isAnalyzing = false);
       final message = e is PlatformException
-          ? (e.message ?? e.code ?? e.toString())
+          ? (e.message ?? e.code)
           : e.toString();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Analysis failed: $message')),
@@ -270,7 +272,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 24),
             _buildWaveformSection(context, textColor, isDark),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
+            _ModelStatusBanner(),
+            const SizedBox(height: 16),
             GradientButton(
               label: _isAnalyzing
                   ? 'Analyzing...'
@@ -328,6 +332,119 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ModelStatusBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Wav2Vec2ModelManager.instance,
+      builder: (context, _) {
+        final manager = Wav2Vec2ModelManager.instance;
+        switch (manager.status) {
+          case ModelStatus.downloading:
+            final pct = (manager.downloadProgress * 100).toStringAsFixed(0);
+            return _Banner(
+              color: Colors.blue.shade50,
+              borderColor: Colors.blue.shade200,
+              icon: Icons.download_rounded,
+              iconColor: Colors.blue,
+              text: 'Downloading offline model... $pct%',
+              child: LinearProgressIndicator(
+                value: manager.downloadProgress > 0 ? manager.downloadProgress : null,
+                backgroundColor: Colors.blue.shade100,
+                color: Colors.blue,
+              ),
+            );
+          case ModelStatus.checking:
+            return _Banner(
+              color: Colors.blue.shade50,
+              borderColor: Colors.blue.shade200,
+              icon: Icons.search_rounded,
+              iconColor: Colors.blue,
+              text: 'Checking for offline model...',
+              child: const LinearProgressIndicator(),
+            );
+          case ModelStatus.error:
+            return _Banner(
+              color: Colors.orange.shade50,
+              borderColor: Colors.orange.shade200,
+              icon: Icons.cloud_off_rounded,
+              iconColor: Colors.orange,
+              text: 'Offline model unavailable. Online analysis will be used.',
+              trailing: TextButton(
+                onPressed: () => Wav2Vec2ModelManager.instance.retry(),
+                child: const Text('Retry'),
+              ),
+            );
+          case ModelStatus.ready:
+            return _Banner(
+              color: Colors.green.shade50,
+              borderColor: Colors.green.shade200,
+              icon: Icons.offline_bolt_rounded,
+              iconColor: Colors.green,
+              text: 'Offline model ready',
+            );
+          case ModelStatus.idle:
+            return const SizedBox.shrink();
+        }
+      },
+    );
+  }
+}
+
+class _Banner extends StatelessWidget {
+  const _Banner({
+    required this.color,
+    required this.borderColor,
+    required this.icon,
+    required this.iconColor,
+    required this.text,
+    this.child,
+    this.trailing,
+  });
+
+  final Color color;
+  final Color borderColor;
+  final IconData icon;
+  final Color iconColor;
+  final String text;
+  final Widget? child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: iconColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(fontSize: 13, color: iconColor),
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          if (child != null) ...[
+            const SizedBox(height: 8),
+            child!,
+          ],
+        ],
       ),
     );
   }

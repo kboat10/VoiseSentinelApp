@@ -4,6 +4,7 @@ import 'theme/theme_controller.dart';
 import 'screens/initial_route_wrapper.dart';
 import 'screens/settings_screen.dart';
 import 'screens/audio_breakdown_screen.dart';
+import 'screens/login_screen.dart';
 
 void main() {
   runApp(const VoiceSentinelApp());
@@ -46,6 +47,7 @@ class _VoiceSentinelAppState extends State<VoiceSentinelApp> {
           routes: {
             '/settings': (context) => const SettingsScreen(),
             '/audio-breakdown': (context) => const AudioBreakdownScreen(),
+            '/login': (context) => const LoginScreen(),
           },
         );
       },

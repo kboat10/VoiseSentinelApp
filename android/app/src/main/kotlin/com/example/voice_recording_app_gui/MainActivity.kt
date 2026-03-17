@@ -1,7 +1,10 @@
 package com.example.voice_recording_app_gui
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import java.io.File
+import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -33,6 +36,8 @@ class MainActivity : FlutterActivity() {
     }
     private var onnxHelper: OnnxHelper? = null
     private var wav2vec2Extractor: Wav2Vec2Extractor? = null
+    private val bgExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -48,62 +53,75 @@ class MainActivity : FlutterActivity() {
                 "extractFeaturesFromAudio" -> {
                     val audioPath = call.argument<String>("audioPath")
                     val wav2vecModelPath = call.argument<String>("wav2vecModelPath")
-                    if (audioPath == null) {
+                    if (audioPath.isNullOrBlank()) {
                         result.error("INVALID_ARGS", "audioPath is required", null)
                         return@setMethodCallHandler
                     }
-                    try {
-                        val waveform = AudioDecoder.decodeTo16kMonoFloat(audioPath)
-                            ?: run {
-                                result.error("DECODE_FAILED", "Could not decode audio file", null)
-                                return@setMethodCallHandler
+                    bgExecutor.submit {
+                        try {
+                            val waveform = AudioDecoder.decodeTo16kMonoFloat(audioPath)
+                            if (waveform == null) {
+                                mainHandler.post { result.error("DECODE_FAILED", "Could not decode audio file", null) }
+                                return@submit
                             }
-                        val acousticFeatures = FeatureExtractor.extract(waveform)
-                        val wav2vec = wav2vec2Extractor ?: run {
-                            result.error("WAV2VEC2_UNAVAILABLE", "Wav2Vec2 extractor not initialized", null)
-                            return@setMethodCallHandler
-                        }
-                        val modelPath = call.argument<String>("wav2vecModelPath")
-                        if (!wav2vec.isLoaded()) {
-                            val loaded = if (modelPath != null && modelPath.isNotEmpty()) {
-                                val file = File(modelPath)
-                                if (!file.exists() || file.length() == 0L) {
-                                    result.error("WAV2VEC2_UNAVAILABLE", "Downloaded model file not found or empty. Try downloading again from Settings.", null)
-                                    return@setMethodCallHandler
+                            val acousticFeatures = FeatureExtractor.extract(waveform)
+                            val wav2vec = wav2vec2Extractor
+                            if (wav2vec == null) {
+                                mainHandler.post { result.error("WAV2VEC2_UNAVAILABLE", "Wav2Vec2 extractor not initialized", null) }
+                                return@submit
+                            }
+                            if (!wav2vec.isLoaded()) {
+                                val loaded = if (!wav2vecModelPath.isNullOrEmpty()) {
+                                    val file = File(wav2vecModelPath)
+                                    if (!file.exists() || file.length() == 0L) {
+                                        mainHandler.post { result.error("WAV2VEC2_UNAVAILABLE", "Downloaded model file not found or empty. Try downloading again from Settings.", null) }
+                                        return@submit
+                                    }
+                                    wav2vec.loadFromPath(wav2vecModelPath)
+                                } else {
+                                    wav2vec.load()
                                 }
-                                wav2vec.loadFromPath(modelPath)
-                            } else {
-                                wav2vec.load()
+                                if (!loaded) {
+                                    mainHandler.post { result.error("WAV2VEC2_UNAVAILABLE", "Wav2Vec2 model not found. Please wait for the model to download.", null) }
+                                    return@submit
+                                }
                             }
-                            if (!loaded) {
-                                result.error("WAV2VEC2_UNAVAILABLE", "Wav2Vec2 model not found. Download from API or run: python scripts/export_wav2vec2_onnx.py", null)
-                                return@setMethodCallHandler
+                            val sslFeatures = wav2vec.extract(waveform)
+                            if (sslFeatures == null) {
+                                mainHandler.post { result.error("SSL_EXTRACT_FAILED", "Wav2Vec2 inference failed", null) }
+                                return@submit
                             }
+                            if (acousticFeatures.size != 68 || sslFeatures.size != 1024) {
+                                mainHandler.post { result.error("EXTRACT_FAILED", "Feature size mismatch: acoustic=${acousticFeatures.size} ssl=${sslFeatures.size}", null) }
+                                return@submit
+                            }
+                            val fullFeatures = FloatArray(OnnxEnsemble.FEATURE_DIM)
+                            System.arraycopy(acousticFeatures, 0, fullFeatures, 0, 68)
+                            System.arraycopy(sslFeatures, 0, fullFeatures, 68, 1024)
+                            mainHandler.post { result.success(fullFeatures.map { it.toDouble() }) }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("EXTRACT_FAILED", e.message, null) }
                         }
-                        val sslFeatures = wav2vec.extract(waveform)
-                            ?: run {
-                                result.error("SSL_EXTRACT_FAILED", "Wav2Vec2 inference failed", null)
-                                return@setMethodCallHandler
-                            }
-                        val fullFeatures = FloatArray(OnnxEnsemble.FEATURE_DIM)
-                        System.arraycopy(acousticFeatures, 0, fullFeatures, 0, 68)
-                        System.arraycopy(sslFeatures, 0, fullFeatures, 68, 1024)
-                        result.success(fullFeatures.map { it.toDouble() })
-                    } catch (e: Exception) {
-                        result.error("EXTRACT_FAILED", e.message, null)
                     }
                 }
                 "loadModel" -> {
                     val path = call.argument<String>("assetPath")
-                    if (path == null) {
+                    if (path.isNullOrBlank()) {
                         result.error("INVALID_ARGS", "assetPath is required", null)
                         return@setMethodCallHandler
                     }
-                    try {
-                        onnxHelper?.loadModel(path)
-                        result.success("loaded")
-                    } catch (e: Exception) {
-                        result.error("LOAD_FAILED", e.message, null)
+                    bgExecutor.submit {
+                        try {
+                            val helper = onnxHelper
+                            if (helper == null) {
+                                mainHandler.post { result.error("LOAD_FAILED", "ONNX helper not initialized", null) }
+                                return@submit
+                            }
+                            helper.loadModel(path)
+                            mainHandler.post { result.success("loaded") }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("LOAD_FAILED", e.message, null) }
+                        }
                     }
                 }
                 "runInference" -> {
@@ -114,13 +132,20 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGS", "modelAssetPath, inputShape, inputValues required", null)
                         return@setMethodCallHandler
                     }
-                    val shape = shapeList.map { it.toLong() }.toLongArray()
-                    val values = valuesList.map { it.toFloat() }.toFloatArray()
-                    try {
-                        val output = onnxHelper?.runInference(assetPath, shape, values)
-                        result.success(output)
-                    } catch (e: Exception) {
-                        result.error("INFERENCE_FAILED", e.message, null)
+                    bgExecutor.submit {
+                        val helper = onnxHelper
+                        if (helper == null) {
+                            mainHandler.post { result.error("INFERENCE_FAILED", "ONNX helper not initialized", null) }
+                            return@submit
+                        }
+                        val shape = shapeList.map { it.toLong() }.toLongArray()
+                        val values = valuesList.map { it.toFloat() }.toFloatArray()
+                        try {
+                            val output = helper.runInference(assetPath, shape, values)
+                            mainHandler.post { result.success(output) }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("INFERENCE_FAILED", e.message, null) }
+                        }
                     }
                 }
                 "unloadModel" -> {
@@ -129,11 +154,18 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "loadEnsembleModels" -> {
-                    try {
-                        onnxHelper?.loadEnsembleModels()
-                        result.success("loaded")
-                    } catch (e: Exception) {
-                        result.error("LOAD_FAILED", e.message, null)
+                    bgExecutor.submit {
+                        try {
+                            val helper = onnxHelper
+                            if (helper == null) {
+                                mainHandler.post { result.error("LOAD_FAILED", "ONNX helper not initialized", null) }
+                                return@submit
+                            }
+                            helper.loadEnsembleModels()
+                            mainHandler.post { result.success("loaded") }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("LOAD_FAILED", e.message, null) }
+                        }
                     }
                 }
                 "runEnsemble" -> {
@@ -142,15 +174,24 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGS", "features must be a list of ${OnnxEnsemble.FEATURE_DIM} numbers", null)
                         return@setMethodCallHandler
                     }
-                    val features = FloatArray(featuresList.size) { featuresList[it].toFloat() }
-                    try {
-                        val (probability, verdict) = onnxHelper!!.runEnsemble(features)
-                        result.success(mapOf(
-                            "probability" to probability,
-                            "verdict" to verdict,
-                        ))
-                    } catch (e: Exception) {
-                        result.error("ENSEMBLE_FAILED", e.message, null)
+                    bgExecutor.submit {
+                        val helper = onnxHelper
+                        if (helper == null) {
+                            mainHandler.post { result.error("ENSEMBLE_FAILED", "ONNX helper not initialized", null) }
+                            return@submit
+                        }
+                        val features = FloatArray(featuresList.size) { featuresList[it].toFloat() }
+                        try {
+                            val (probability, verdict) = helper.runEnsemble(features)
+                            mainHandler.post {
+                                result.success(mapOf(
+                                    "probability" to probability,
+                                    "verdict" to verdict,
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            mainHandler.post { result.error("ENSEMBLE_FAILED", e.message, null) }
+                        }
                     }
                 }
                 else -> result.notImplemented()
@@ -163,6 +204,7 @@ class MainActivity : FlutterActivity() {
         onnxHelper = null
         wav2vec2Extractor?.close()
         wav2vec2Extractor = null
+        bgExecutor.shutdown()
         super.onDestroy()
     }
 }

@@ -3,11 +3,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../app/record_call_trigger.dart';
+import '../services/auth_storage.dart';
+import '../services/wav2vec_model_manager.dart';
 import '../onnx/onnx_inference_service.dart';
 import 'main_shell.dart';
-import 'welcome_screen.dart';
+import 'login_screen.dart';
 
-/// Decides initial screen: if opened from "record call" notification, go to MainShell.
+/// Decides initial screen: auth gate → record call intent or welcome.
+/// When logged in on Android, also kicks off Wav2Vec2 model download in background.
 class InitialRouteWrapper extends StatefulWidget {
   const InitialRouteWrapper({super.key});
 
@@ -26,27 +29,49 @@ class _InitialRouteWrapperState extends State<InitialRouteWrapper> {
   }
 
   Future<void> _checkIntent() async {
+    await AuthStorage.load();
+    if (!AuthStorage.isLoggedIn) {
+      if (mounted) {
+        setState(() {
+          _initialChild = const LoginScreen();
+          _checked = true;
+        });
+      }
+      return;
+    }
+
+    // Kick off model download in background (non-blocking) whenever logged in on Android.
+    if (Platform.isAndroid) {
+      Wav2Vec2ModelManager.instance.ensureModel();
+    }
+
     if (!Platform.isAndroid) {
-      if (mounted) setState(() {
-        _initialChild = const WelcomeScreen();
-        _checked = true;
-      });
+      if (mounted) {
+        setState(() {
+          _initialChild = const MainShell();
+          _checked = true;
+        });
+      }
       return;
     }
     try {
       final recordCall = await OnnxInferenceService.getAndClearRecordCallIntent();
-      if (recordCall) RecordCallTrigger.triggered = true;
+      if (recordCall) {
+        RecordCallTrigger.triggered = true;
+      }
       if (mounted) {
         setState(() {
-          _initialChild = recordCall ? const MainShell() : const WelcomeScreen();
+          _initialChild = const MainShell();
           _checked = true;
         });
       }
     } catch (_) {
-      if (mounted) setState(() {
-        _initialChild = const WelcomeScreen();
-        _checked = true;
-      });
+      if (mounted) {
+        setState(() {
+          _initialChild = const MainShell();
+          _checked = true;
+        });
+      }
     }
   }
 

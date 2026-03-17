@@ -46,6 +46,18 @@ object AudioDecoder {
             val format = extractor.getTrackFormat(trackIndex)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
 
+            val sourceSampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE).takeIf { it > 0 } ?: 44100
+            val channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT).takeIf { it > 0 } ?: 1
+
+            // WAV/PCM: no codec needed – read raw PCM bytes directly
+            if (mime == "audio/raw" || mime == "audio/wav") {
+                val rawPcm = readRawPcm(extractor)
+                extractor.release()
+                if (rawPcm.isEmpty()) return null
+                return finalize(rawPcm, sourceSampleRate, channelCount)
+            }
+
+            // Compressed formats (AAC/M4A, MP3, FLAC, etc.) via MediaCodec
             val codec = MediaCodec.createDecoderByType(mime)
             codec.configure(format, null, null, 0)
             codec.start()
@@ -86,20 +98,18 @@ object AudioDecoder {
                         }
                         val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
                         if (outputBuffer != null) {
-                        outputBuffer.position(bufferInfo.offset)
-                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                        val chunk = ByteArray(bufferInfo.size)
-                        outputBuffer.get(chunk)
-                        val shorts = ByteBuffer.wrap(chunk).order(ByteOrder.nativeOrder()).asShortBuffer()
-                        while (shorts.hasRemaining()) {
-                            pcmSamples.add(shorts.get())
-                        }
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                            val chunk = ByteArray(bufferInfo.size)
+                            outputBuffer.get(chunk)
+                            val shorts = ByteBuffer.wrap(chunk).order(ByteOrder.nativeOrder()).asShortBuffer()
+                            while (shorts.hasRemaining()) {
+                                pcmSamples.add(shorts.get())
+                            }
                         }
                         codec.releaseOutputBuffer(outputBufferIndex, false)
                     }
-                    outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        // Format changed, continue
-                    }
+                    outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { /* continue */ }
                     outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                         if (inputDone) outputDone = true
                     }
@@ -113,28 +123,41 @@ object AudioDecoder {
             codec.release()
             extractor.release()
 
-            val sourceSampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE).takeIf { it > 0 } ?: 44100
-            val channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT).takeIf { it > 0 } ?: 1
-            val sourceSamples = pcmSamples.toShortArray()
-
-            val mono = if (channelCount > 1) {
-                toMono(sourceSamples, channelCount)
-            } else {
-                sourceSamples
-            }
-
-            val resampled = if (sourceSampleRate != TARGET_SAMPLE_RATE) {
-                resample(mono, sourceSampleRate, TARGET_SAMPLE_RATE)
-            } else {
-                mono
-            }
-
-            val floats = FloatArray(resampled.size) { resampled[it] / 32768f }
-            floats
+            finalize(pcmSamples.toShortArray(), sourceSampleRate, channelCount)
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
+    }
+
+    /** Reads raw PCM 16-bit samples from MediaExtractor (WAV files). */
+    private fun readRawPcm(extractor: MediaExtractor): ShortArray {
+        val samples = mutableListOf<Short>()
+        val buf = ByteBuffer.allocate(65536)
+        while (true) {
+            buf.clear()
+            val size = extractor.readSampleData(buf, 0)
+            if (size < 0) break
+            buf.rewind()
+            val bytes = ByteArray(size)
+            buf.get(bytes, 0, size)
+            val sb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+            while (sb.hasRemaining()) samples.add(sb.get())
+            extractor.advance()
+        }
+        return samples.toShortArray()
+    }
+
+    /** Converts raw PCM shorts to a normalised 16kHz mono FloatArray. */
+    private fun finalize(samples: ShortArray, sourceSampleRate: Int, channelCount: Int): FloatArray? {
+        val mono = if (channelCount > 1) toMono(samples, channelCount) else samples
+        val resampled = if (sourceSampleRate != TARGET_SAMPLE_RATE) {
+            resample(mono, sourceSampleRate, TARGET_SAMPLE_RATE)
+        } else {
+            mono
+        }
+        if (resampled.isEmpty()) return null
+        return FloatArray(resampled.size) { resampled[it] / 32768f }
     }
 
     private fun toMono(samples: ShortArray, channels: Int): ShortArray {

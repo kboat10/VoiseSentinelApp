@@ -19,9 +19,12 @@ class AnalysisService {
     if (hasConnection) {
       try {
         return await ApiService.predict(audioPath);
-      } catch (_) {
-        // Fall back to offline if API fails
-        return await _analyzeOffline(audioPath);
+      } catch (apiError) {
+        // Fall back to offline only if the model is ready; otherwise surface the API error
+        if (Wav2Vec2ModelManager.instance.isReady) {
+          return await _analyzeOffline(audioPath);
+        }
+        rethrow;
       }
     } else {
       return await _analyzeOffline(audioPath);
@@ -36,7 +39,23 @@ class AnalysisService {
       );
     }
 
-    final modelPath = await Wav2Vec2ModelManager.ensureModel();
+    final manager = Wav2Vec2ModelManager.instance;
+    // Fail fast — do NOT wait for a potentially 300MB download during analysis
+    if (!manager.isReady) {
+      final status = manager.status;
+      if (status == ModelStatus.downloading || status == ModelStatus.checking) {
+        throw PlatformException(
+          code: 'MODEL_NOT_READY',
+          message: 'Offline model is still downloading. Please wait and try again.',
+        );
+      }
+      throw PlatformException(
+        code: 'MODEL_NOT_READY',
+        message: 'Offline model is not available. Please check your connection and try again.',
+      );
+    }
+
+    final modelPath = manager.modelPath;
     final features = await OnnxInferenceService.extractFeaturesFromAudio(
       audioPath,
       wav2vecModelPath: modelPath,
