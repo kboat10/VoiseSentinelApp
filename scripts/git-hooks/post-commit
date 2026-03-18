@@ -1,0 +1,7 @@
+#!/bin/sh
+# Auto-sync: pull others' changes, then push ours.
+# Runs after every commit.
+set -e
+branch=$(git branch --show-current)
+git pull --rebase origin "$branch" || exit 1
+git push origin "$branch"

@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.voice_recording_app_gui"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+    // ndkVersion omitted – use default from SDK; specify only if you have that NDK installed
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

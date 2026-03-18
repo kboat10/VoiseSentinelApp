@@ -14,6 +14,21 @@ Flutter mobile app for AI-powered deepfake voice detection. Record calls, analyz
 - Flutter SDK 3.0+
 - Android device/emulator (API 23+)
 
+## Auto-sync with GitHub
+
+To automatically push your commits and pull others' changes:
+
+```bash
+./scripts/setup-hooks.sh
+```
+
+After setup, every `git commit` will pull from `origin` (rebase) and push. To sync manually without committing:
+
+```bash
+./scripts/sync.sh      # macOS/Linux
+scripts\sync.bat      # Windows
+```
+
 ## Running the app
 
 ```bash
