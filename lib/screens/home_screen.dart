@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,7 +12,6 @@ import '../widgets/gradient_button.dart';
 import '../widgets/live_voice_waveform.dart' show LiveVoiceWaveform, AudioVisualizerStyle;
 import '../services/analysis_service.dart';
 import '../services/history_service.dart';
-import '../services/mobile_bundle_service.dart';
 import '../services/wav2vec_model_manager.dart';
 import '../models/history_record.dart';
 import 'audio_breakdown_screen.dart';
@@ -35,17 +33,11 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<Amplitude>? _amplitudeSub;
   String? _currentRecordingPath;
   bool _isAnalyzing = false;
-  bool _diagnosticsLoading = true;
-  bool _apiReachable = false;
-  String _networkStatusText = 'Checking...';
-  String? _backendStatusText;
-  DateTime? _diagnosticsCheckedAt;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkRecordCallTrigger());
-    unawaited(_refreshDiagnostics());
   }
 
   void _checkRecordCallTrigger() {
@@ -208,234 +200,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _refreshDiagnostics() async {
-    if (!mounted) return;
-    setState(() {
-      _diagnosticsLoading = true;
-      _backendStatusText = null;
-    });
-
-    try {
-      final connectivity = await Connectivity().checkConnectivity();
-      final online = connectivity.any((c) =>
-          c == ConnectivityResult.wifi ||
-          c == ConnectivityResult.mobile ||
-          c == ConnectivityResult.ethernet);
-
-      final transport = online
-          ? connectivity
-              .where((c) => c != ConnectivityResult.none)
-              .map((c) => c.name)
-              .toSet()
-              .join(', ')
-          : 'none';
-
-      bool apiReachable = false;
-      String? backendStatus;
-      if (online) {
-        try {
-          final info = await MobileBundleService.getBundleInfo();
-          apiReachable = true;
-          backendStatus = info.bundleVersion == null
-              ? 'Backend reachable'
-              : 'Backend reachable (bundle ${info.bundleVersion})';
-        } catch (e) {
-          apiReachable = false;
-          backendStatus = 'Backend unreachable: $e';
-        }
-      } else {
-        backendStatus = 'Backend check skipped (offline)';
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _networkStatusText = online ? 'Online via $transport' : 'Offline';
-        _apiReachable = apiReachable;
-        _backendStatusText = backendStatus;
-        _diagnosticsCheckedAt = DateTime.now();
-        _diagnosticsLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _networkStatusText = 'Unknown';
-        _apiReachable = false;
-        _backendStatusText = 'Diagnostics failed: $e';
-        _diagnosticsCheckedAt = DateTime.now();
-        _diagnosticsLoading = false;
-      });
-    }
-  }
-
-  String _formatTime(DateTime dt) {
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    final ss = dt.second.toString().padLeft(2, '0');
-    return '$hh:$mm:$ss';
-  }
-
-  Widget _buildSystemStatusCard(bool isDark, Color textColor) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.monitor_heart_rounded, color: textColor),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'System Status',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: textColor,
-                    ),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _diagnosticsLoading ? null : _refreshDiagnostics,
-                  icon: _diagnosticsLoading
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Refresh'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            _statusRow(
-              icon: _networkStatusText.startsWith('Online')
-                  ? Icons.wifi_rounded
-                  : Icons.wifi_off_rounded,
-              iconColor:
-                  _networkStatusText.startsWith('Online') ? Colors.green : Colors.orange,
-              title: 'Network',
-              value: _networkStatusText,
-              muted: isDark,
-            ),
-            const SizedBox(height: 8),
-            _statusRow(
-              icon: _apiReachable ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
-              iconColor: _apiReachable ? Colors.green : Colors.orange,
-              title: 'Backend API',
-              value: _backendStatusText ?? 'Checking backend...',
-              muted: isDark,
-            ),
-            if (Platform.isAndroid) ...[
-              const SizedBox(height: 8),
-              ListenableBuilder(
-                listenable: Wav2Vec2ModelManager.instance,
-                builder: (context, _) {
-                  final manager = Wav2Vec2ModelManager.instance;
-                  String value;
-                  IconData icon;
-                  Color color;
-
-                  switch (manager.status) {
-                    case ModelStatus.ready:
-                      value = 'Ready (${manager.modelPath ?? 'cached'})';
-                      icon = Icons.offline_bolt_rounded;
-                      color = Colors.green;
-                    case ModelStatus.downloading:
-                      final pct = (manager.downloadProgress * 100).toStringAsFixed(0);
-                      value = 'Downloading $pct%';
-                      icon = Icons.download_rounded;
-                      color = Colors.blue;
-                    case ModelStatus.checking:
-                      value = 'Checking local cache';
-                      icon = Icons.search_rounded;
-                      color = Colors.blue;
-                    case ModelStatus.error:
-                      value = 'Error: ${manager.errorMessage ?? 'Unknown error'}';
-                      icon = Icons.error_outline_rounded;
-                      color = Colors.red;
-                    case ModelStatus.idle:
-                      value = 'Not started yet';
-                      icon = Icons.pause_circle_outline_rounded;
-                      color = Colors.orange;
-                  }
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _statusRow(
-                        icon: icon,
-                        iconColor: color,
-                        title: 'Offline model',
-                        value: value,
-                        muted: isDark,
-                      ),
-                      if (manager.status == ModelStatus.downloading) ...[
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: manager.downloadProgress > 0
-                              ? manager.downloadProgress
-                              : null,
-                        ),
-                      ],
-                    ],
-                  );
-                },
-              ),
-            ],
-            if (_diagnosticsCheckedAt != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                'Last checked: ${_formatTime(_diagnosticsCheckedAt!)}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.grey[400] : Colors.grey[600],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statusRow({
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String value,
-    required bool muted,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 1),
-          child: Icon(icon, size: 16, color: iconColor),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: TextStyle(
-                fontSize: 13,
-                color: muted ? Colors.grey[300] : const Color(0xFF374151),
-              ),
-              children: [
-                TextSpan(
-                  text: '$title: ',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                TextSpan(text: value),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -467,8 +231,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 1.4,
               ),
             ),
-            const SizedBox(height: 16),
-            _buildSystemStatusCard(isDark, textColor),
             const SizedBox(height: 32),
             Card(
               child: Padding(

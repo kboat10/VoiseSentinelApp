@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/analysis_result.dart';
@@ -23,6 +24,7 @@ class ApiService {
     }
 
     final uri = Uri.parse('$_baseUrl/forensics/predict');
+    debugPrint('[ApiService] predict start uri=$uri audioPath=$audioPath');
     final request = http.MultipartRequest('POST', uri);
     request.files.add(
       await http.MultipartFile.fromPath('file', audioPath),
@@ -33,6 +35,7 @@ class ApiService {
         .timeout(const Duration(seconds: 60),
             onTimeout: () => throw TimeoutException('Upload timed out. Check your connection.'));
     final response = await http.Response.fromStream(streamedResponse);
+    debugPrint('[ApiService] predict response status=${response.statusCode}');
 
     if (response.statusCode != 200) {
       throw Exception(
@@ -41,26 +44,69 @@ class ApiService {
     }
 
     final json = _parseJson(response.body);
-    final verdict = _mapVerdict(json['verdict']);
-    final confidence = (json['confidence'] as num?)?.toDouble() ??
-        (json['confidence_score'] as num?)?.toDouble() ??
-        0.0;
+    final syntheticProbability = _extractSyntheticProbability(json);
+    final verdict = _verdictFromSyntheticProbability(syntheticProbability);
 
-    return AnalysisResult(
+    final result = AnalysisResult(
       verdict: verdict,
-      probability: confidence,
+      probability: syntheticProbability,
       sampleId: (json['sample_id'] as num?)?.toInt(),
       filename: json['filename'] as String?,
       source: 'online',
+      apiConfidenceLevel: json['confidence_level'] as String?,
+      modelVotes: _extractModelVotes(json['model_votes']),
+      analysisUrl: json['analysis_url'] as String?,
     );
+    debugPrint('[ApiService] predict normalized score=${result.sentinelScore} verdict=${result.canonicalVerdict} confidence=${result.confidenceScore} source=${result.source}');
+    return result;
   }
 
-  static String _mapVerdict(dynamic v) {
-    if (v == null) return 'suspicious';
-    final s = v.toString().toLowerCase();
-    if (s == 'real') return 'real';
-    if (s == 'synthetic') return 'synthetic_probable';
-    return s;
+  static double _extractSyntheticProbability(Map<String, dynamic> json) {
+    final direct = _toDouble(json['synthetic_probability']) ??
+        _toDouble(json['probability']) ??
+        _toDouble(json['synthetic_prob']) ??
+        _toDouble(json['p_synthetic']) ??
+        _toDouble(json['score']);
+    if (direct != null) return _clamp01(direct);
+
+    final confidence = _toDouble(json['confidence_score']) ?? _toDouble(json['confidence']);
+    if (confidence != null) {
+      final verdictRaw = (json['verdict'] ?? '').toString().toLowerCase();
+      final c = _clamp01(confidence);
+      if (verdictRaw == 'real') return 1.0 - c;
+      if (verdictRaw == 'synthetic' || verdictRaw == 'suspicious') return c;
+      return c;
+    }
+
+    return 0.0;
+  }
+
+  static String _verdictFromSyntheticProbability(double pSynthetic) {
+    return pSynthetic > 0.15 ? 'synthetic' : 'real';
+  }
+
+  static double _clamp01(double v) {
+    if (v.isNaN || v.isInfinite) return 0.0;
+    if (v < 0) return 0.0;
+    if (v > 1) return 1.0;
+    return v;
+  }
+
+  static double? _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  static Map<String, double>? _extractModelVotes(dynamic raw) {
+    if (raw is! Map) return null;
+    final out = <String, double>{};
+    for (final entry in raw.entries) {
+      final key = entry.key.toString();
+      final value = _toDouble(entry.value);
+      if (value != null) out[key] = value;
+    }
+    return out.isEmpty ? null : out;
   }
 
   static Map<String, dynamic> _parseJson(String body) {

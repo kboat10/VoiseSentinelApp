@@ -204,6 +204,7 @@ class MainActivity : FlutterActivity() {
                         val features = FloatArray(featuresList.size) { featuresList[it].toFloat() }
                         try {
                             val (probability, verdict) = helper.runEnsemble(features)
+                            Log.i(TAG, "ensemble_result probability=$probability verdict=$verdict")
                             mainHandler.post {
                                 result.success(mapOf(
                                     "probability" to probability,

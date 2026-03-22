@@ -57,6 +57,9 @@ class HistoryService {
           verdict: m['verdict'] as String? ?? 'suspicious',
           probability: (m['probability'] as num?)?.toDouble() ?? 0.0,
           source: m['source'] as String?,
+          apiConfidenceLevel: m['apiConfidenceLevel'] as String?,
+          modelVotes: _parseModelVotes(m['modelVotes']),
+          analysisUrl: m['analysisUrl'] as String?,
         );
         _records.add(HistoryRecord(
           id: m['id'] as String? ?? '',
@@ -80,8 +83,27 @@ class HistoryService {
             'verdict': r.result.verdict,
             'probability': r.result.probability,
             'source': r.result.source,
+            'apiConfidenceLevel': r.result.apiConfidenceLevel,
+            'modelVotes': r.result.modelVotes,
+            'analysisUrl': r.result.analysisUrl,
             'createdAt': r.createdAt.toIso8601String(),
           }).toList()));
     } catch (_) {}
+  }
+
+  static Map<String, double>? _parseModelVotes(dynamic raw) {
+    if (raw is! Map) return null;
+    final out = <String, double>{};
+    for (final entry in raw.entries) {
+      final key = entry.key.toString();
+      final value = entry.value;
+      if (value is num) {
+        out[key] = value.toDouble();
+      } else if (value is String) {
+        final parsed = double.tryParse(value);
+        if (parsed != null) out[key] = parsed;
+      }
+    }
+    return out.isEmpty ? null : out;
   }
 }

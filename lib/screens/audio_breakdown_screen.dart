@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
 import '../theme/app_theme.dart';
-import '../onnx/onnx_inference_service.dart';
 import '../widgets/app_bar_back.dart';
 
 class AudioBreakdownScreen extends StatelessWidget {
@@ -65,8 +64,8 @@ class AudioBreakdownScreen extends StatelessWidget {
   }
 
   Widget _buildResultContent(BuildContext context, AnalysisResult r, Color textColor, bool isDark) {
-    final verdictLabel = EnsembleVerdictLabels.labelFor(r.verdict);
-    final verdictColor = _verdictColor(r.verdict);
+    final verdictLabel = r.isSyntheticByRule ? 'Fake' : 'Real';
+    final verdictColor = _riskColor(r);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -100,9 +99,31 @@ class AudioBreakdownScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: verdictColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      r.riskBand.toUpperCase(),
+                      style: TextStyle(
+                        color: verdictColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Text(
-                    'Confidence: ${(r.probability * 100).toStringAsFixed(1)}%',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                    'Sentinel Score: ${(r.sentinelScore * 100).toStringAsFixed(1)}%',
+                    style: TextStyle(color: verdictColor, fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Confidence (${r.confidenceLevel}): ${(r.confidenceScore * 100).toStringAsFixed(1)}% • P(synthetic) ${(r.syntheticProbability * 100).toStringAsFixed(1)}%',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 14),
                   ),
                   if (r.source != null) ...[
                     const SizedBox(height: 8),
@@ -116,28 +137,36 @@ class AudioBreakdownScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Sentinel Score is a risk signal, not absolute truth. Always review context, call metadata, and additional evidence before making high-stakes decisions.',
+                style: TextStyle(color: Colors.grey[700], fontSize: 13, height: 1.4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
           Text(
             'Classification thresholds',
             style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 12),
-          _ThresholdRow('≤ 0.15', 'Real (Human)', Colors.green),
-          _ThresholdRow('0.15 – 0.45', 'Suspicious', Colors.orange),
-          _ThresholdRow('0.45 – 0.85', 'Synthetic (Probable)', Colors.deepOrange),
-          _ThresholdRow('> 0.85', 'Synthetic (Definitive)', Colors.red),
+          _ThresholdRow('≤ 0.15', 'Safe: Real verdict • Confidence High', Colors.green),
+          _ThresholdRow('> 0.15 – 0.45', 'Suspicious: Synthetic verdict • Confidence Low/Suspicious', Colors.orange),
+          _ThresholdRow('> 0.45', 'Fake: Synthetic verdict • Medium to High confidence', Colors.red),
         ],
       ),
     );
   }
 
-  Color _verdictColor(String v) {
-    switch (v) {
-      case 'real':
+  Color _riskColor(AnalysisResult r) {
+    switch (r.riskBand) {
+      case 'safe':
         return Colors.green;
       case 'suspicious':
         return Colors.orange;
-      case 'synthetic_probable':
-      case 'synthetic_definitive':
+      case 'fake':
         return Colors.red;
       default:
         return Colors.grey;
@@ -168,7 +197,12 @@ class _ThresholdRow extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 12),
-          Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w500)),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(color: color, fontWeight: FontWeight.w500),
+            ),
+          ),
         ],
       ),
     );

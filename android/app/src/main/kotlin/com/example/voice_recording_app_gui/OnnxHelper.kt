@@ -8,6 +8,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.FloatBuffer
 import java.util.Collections
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 /**
  * Loads ONNX models from assets and runs inference.
@@ -17,6 +19,7 @@ class OnnxHelper(private val context: Context) {
 
     private val env = OrtEnvironment.getEnvironment()
     private val sessions = mutableMapOf<String, OrtSession>()
+    private val baseInferenceExecutor = Executors.newFixedThreadPool(5)
 
     /**
      * Copies model from assets to cache and loads it. Call once per model before runInference.
@@ -70,19 +73,16 @@ class OnnxHelper(private val context: Context) {
                     val outputTensor = result.get(name).get() as? OnnxTensor ?: continue
                     val shape = outputTensor.info.shape
                     if (shape.isEmpty()) {
-                        outputTensor.close()
                         continue
                     }
                     val numElements = shape.map { it.toInt() }.reduce(Int::times)
                     if (numElements <= 0) {
-                        outputTensor.close()
                         continue
                     }
                     val floats = extractFloatsFromTensor(outputTensor, numElements)
                     if (floats != null) {
                         outputMap[name] = floats.toList()
                     }
-                    outputTensor.close()
                 } catch (e: Exception) {
                     // Skip outputs that fail to extract (e.g. unsupported type)
                 }
@@ -131,18 +131,24 @@ class OnnxHelper(private val context: Context) {
         }
         val scaledVector = FloatArray(OnnxEnsemble.FEATURE_DIM) { scaledList[it] }
 
-        // 2. Base models (parallel). Order for meta: [RF, CNN, LSTM, TCN, TSSD]
+        // 2. Base models in parallel. Order for meta: [RF, CNN, LSTM, TCN, TSSD]
         val baseProbs = FloatArray(5)
         val shape1092x1 = longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong(), 1L)
         val shape1092 = longArrayOf(1L, OnnxEnsemble.FEATURE_DIM.toLong())
 
-        OnnxEnsemble.BASE_MODELS_FOR_META.forEachIndexed { idx, modelPath ->
-            val out = runInference(
-                modelPath,
-                if (modelPath == OnnxEnsemble.RF) shape1092 else shape1092x1,
-                if (modelPath == OnnxEnsemble.RF) scaledVector else scaledVector
-            )
-            baseProbs[idx] = extractProbability(out)
+        val tasks = OnnxEnsemble.BASE_MODELS_FOR_META.map { modelPath ->
+            Callable<Float> {
+                val out = runInference(
+                    modelPath,
+                    if (modelPath == OnnxEnsemble.RF) shape1092 else shape1092x1,
+                    scaledVector
+                )
+                extractProbability(out)
+            }
+        }
+        val futures = baseInferenceExecutor.invokeAll(tasks)
+        futures.forEachIndexed { idx, future ->
+            baseProbs[idx] = future.get()
         }
 
         // 3. Meta-learner: [1, 5] -> get synthetic probability (Sklearn: output[1][0][1])
@@ -205,5 +211,6 @@ class OnnxHelper(private val context: Context) {
     fun close() {
         sessions.values.forEach { it.close() }
         sessions.clear()
+        baseInferenceExecutor.shutdown()
     }
 }

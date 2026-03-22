@@ -1,73 +1,59 @@
 package com.example.voice_recording_app_gui
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.Manifest
 import android.telephony.TelephonyManager
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 /**
- * Detects incoming/outgoing calls and shows a notification to record.
- * When user taps, opens app with RECORD_CALL intent.
+ * Auto-starts/stops background call monitoring based on call state.
  */
 class CallReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+
         val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
+        if (!CallMonitorPrefs.isEnabled(context)) return
+        if (!hasRequiredPermissions(context)) return
+
         when (state) {
-            TelephonyManager.EXTRA_STATE_RINGING,
-            TelephonyManager.EXTRA_STATE_OFFHOOK -> {
-                showRecordNotification(context)
-            }
+            TelephonyManager.EXTRA_STATE_OFFHOOK -> startMonitoringService(context)
+            TelephonyManager.EXTRA_STATE_IDLE -> stopMonitoringService(context)
         }
     }
 
-    private fun showRecordNotification(context: Context) {
-        createChannel(context)
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_RECORD_CALL, true)
+    private fun startMonitoringService(context: Context) {
+        val serviceIntent = Intent(context, CallMonitoringService::class.java).apply {
+            action = CallMonitoringService.ACTION_START
         }
-        val pending = PendingIntent.getActivity(
-            context,
-            RECORD_REQUEST_CODE,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Voice Sentinel")
-            .setContentText("Tap to record this call for analysis")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(pending)
-            .setAutoCancel(true)
-            .build()
-        try {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
-        } catch (_: SecurityException) {}
-    }
-
-    private fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Call Recording",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply { description = "Notifications for call recording" }
-            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
+            ContextCompat.startForegroundService(context, serviceIntent)
+        } else {
+            context.startService(serviceIntent)
         }
     }
 
-    companion object {
-        const val CHANNEL_ID = "voice_sentinel_call"
-        const val NOTIFICATION_ID = 1001
-        const val RECORD_REQUEST_CODE = 2001
+    private fun stopMonitoringService(context: Context) {
+        val serviceIntent = Intent(context, CallMonitoringService::class.java).apply {
+            action = CallMonitoringService.ACTION_STOP
+        }
+        context.startService(serviceIntent)
+    }
+
+    private fun hasRequiredPermissions(context: Context): Boolean {
+        val hasRecordAudio = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasPhoneState = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_PHONE_STATE,
+        ) == PackageManager.PERMISSION_GRANTED
+        return hasRecordAudio && hasPhoneState
     }
 }

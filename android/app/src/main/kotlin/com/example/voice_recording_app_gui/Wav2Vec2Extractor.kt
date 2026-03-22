@@ -99,7 +99,6 @@ class Wav2Vec2Extractor(private val context: Context) {
             }
             val outputType = outputTensor.info.type.toString().uppercase(Locale.US)
             if (outputType.contains("INT") || outputType.contains("UINT")) {
-                outputTensor.close()
                 result.close()
                 throw IllegalStateException(
                     "Unsupported Wav2Vec2 output type: $outputType. Integer/quantized outputs require explicit dequantization parameters."
@@ -114,18 +113,15 @@ class Wav2Vec2Extractor(private val context: Context) {
                 3 -> { seqLen = shape[1].toInt(); hiddenSize = shape[2].toInt() }
                 2 -> { seqLen = 1; hiddenSize = shape[1].toInt() }
                 else -> {
-                    outputTensor.close()
                     result.close()
                     throw IllegalStateException("Wav2Vec2 output shape must be [batch,seq,hidden] or [batch,hidden], got ${shape.size} dims")
                 }
             }
             val buffer = extractFloatBuffer(outputTensor, batch * seqLen * hiddenSize)
                 ?: run {
-                outputTensor.close()
                 result.close()
                 return null
             }
-            outputTensor.close()
             result.close()
 
             if (hiddenSize != EMBEDDING_DIM) {

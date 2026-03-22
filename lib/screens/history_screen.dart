@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/analysis_result.dart';
 import '../models/history_record.dart';
 import '../theme/app_theme.dart';
 import '../services/history_service.dart';
@@ -73,10 +74,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: _verdictColor(r.result.verdict).withValues(alpha: 0.2),
+                            backgroundColor: _verdictColor(r.result).withValues(alpha: 0.2),
                             child: Icon(
                               r.result.isReal ? Icons.check_circle_rounded : Icons.warning_rounded,
-                              color: _verdictColor(r.result.verdict),
+                              color: _verdictColor(r.result),
                             ),
                           ),
                           title: Text(
@@ -84,8 +85,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
                           ),
                           subtitle: Text(
-                            '${r.duration} • ${_verdictLabel(r.result.verdict)} • ${(r.result.probability * 100).toStringAsFixed(0)}% • ${r.result.source ?? "unknown"}',
+                            '${r.duration} • ${_verdictLabel(r.result)} • Sentinel ${(r.result.sentinelScore * 100).toStringAsFixed(0)}% • ${r.result.source ?? "unknown"}',
                             style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           trailing: const Icon(Icons.chevron_right_rounded),
                           onTap: () {
@@ -126,14 +129,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Color _verdictColor(String v) {
-    switch (v) {
-      case 'real':
+  Color _verdictColor(AnalysisResult result) {
+    switch (result.riskBand) {
+      case 'safe':
         return Colors.green;
       case 'suspicious':
         return Colors.orange;
-      case 'synthetic_probable':
-      case 'synthetic_definitive':
+      case 'fake':
         return Colors.red;
       default:
         return Colors.grey;
@@ -155,18 +157,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return '${d.month}/${d.day}/${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
-  String _verdictLabel(String v) {
-    switch (v) {
-      case 'real':
-        return 'Real';
+  String _verdictLabel(AnalysisResult result) {
+    switch (result.riskBand) {
+      case 'safe':
+        return 'Safe';
       case 'suspicious':
         return 'Suspicious';
-      case 'synthetic_probable':
-        return 'Synthetic';
-      case 'synthetic_definitive':
-        return 'Synthetic';
+      case 'fake':
+        return 'Fake';
       default:
-        return v;
+        return result.isSyntheticByRule ? 'Synthetic' : 'Real';
     }
   }
 }
